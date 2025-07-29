@@ -1,6 +1,7 @@
-streamlit>=1.31
-numpy>=1.24
-pandas>=1.5
-matplotlib>=3.7
-seaborn>=0.12
-scipy>=1.11
+# requirements.txt  — minimal but complete
+streamlit==1.31.1
+matplotlib==3.7.3        # 3.8+ needs Python 3.12 build chain; keep it safe
+numpy==1.24.4            # guaranteed binary wheels on Streamlit Cloud
+pandas==1.5.3
+scipy==1.11.4
+seaborn==0.12.2
