@@ -32,14 +32,15 @@ class CriterionConfig:
     exponent: float = 1.0
 
 DEFAULT_CRIT: Dict[str, CriterionConfig] = {
-    "Utilisation"   : CriterionConfig(True, True , "exponential", "below", 0.8  , slope=1.0 , exponent=6.0),
-    "Slope_pct"     : CriterionConfig(True, True , "linear"     , "above", 2.5  , slope=1.0 ),
-    "Cable_Dia_mm"  : CriterionConfig(True, True , "linear"     , "above", 150  , slope=0.5 ),
-    "N_Cables"      : CriterionConfig(True, True , "exponential", "above", 5    , exponent=1.2),
-    "NatFreq_Hz"    : CriterionConfig(True, False, "linear"     , "above", 2.0  , slope=1.0 ),
-    "Tension_kN"    : CriterionConfig(True, True , "linear"     , "above", 0.0  , slope=1.0 ),
-    "Sag_m"         : CriterionConfig(True, True , "exponential", "below", 0.003, exponent=3.0),
+    "Utilisation"   : CriterionConfig(True,  True , "exponential", "below", 0.8  , slope=1.0 , exponent=6.0),
+    "Slope_pct"     : CriterionConfig(True,  False, "linear"     , "below", 2.5  , slope=1.0 ),  
+    "Cable_Dia_mm"  : CriterionConfig(True,  True , "linear"     , "above", 150  , slope=0.5 ),
+    "N_Cables"      : CriterionConfig(True,  True , "exponential", "above", 5    , exponent=1.2),
+    "NatFreq_Hz"    : CriterionConfig(True,  False, "linear"     , "above", 2.0  , slope=1.0 ),
+    "Tension_kN"    : CriterionConfig(True,  True , "linear"     , "above", 0.0  , slope=1.0 ),
+    "Sag_m"         : CriterionConfig(True,  False, "exponential", "below", 0.003, exponent=3.0),
 }
+
 
 CREDIT = "Authors : Vijaykumar Parmar & Dr. K. B. Parikh"
 
