@@ -263,36 +263,36 @@ if st.session_state.get("results_ready"):
 
     tab1, tab2, tab3 = st.tabs(["Cable profile & contour", "Parallel plot", "Full table"])
 
-   with tab1:
-    st.pyplot(cable_profile_fig(span, best.Sag_m))
+    with tab1:
+        st.pyplot(cable_profile_fig(span, best.Sag_m))
 
-    st.markdown("#### Contour plot generator")
-    vars_list = [
-        "Utilisation", "Cable_Dia_mm", "N_Cables", "NatFreq_Hz",
-        "Sag_m", "Tension_kN", "CableMass_kg",
-    ]
-    c1, c2, c3 = st.columns([3,3,1])
-    x_sel = c1.selectbox("X variable", vars_list, key="xsel")
-    y_sel = c2.selectbox("Y variable", vars_list, index=1, key="ysel")
+        st.markdown("#### Contour plot generator")
+        vars_list = [
+            "Utilisation", "Cable_Dia_mm", "N_Cables", "NatFreq_Hz",
+            "Sag_m", "Tension_kN", "CableMass_kg",
+        ]
+        c1, c2, c3 = st.columns([3, 3, 1])
+        x_sel = c1.selectbox("X variable", vars_list, key="xsel")
+        y_sel = c2.selectbox("Y variable", vars_list, index=1, key="ysel")
 
-    colA, colB = st.columns([1, 2])
-    gen_single = colA.button("Generate")
-    gen_all = colB.button("Generate All Charts")
+        colA, colB = st.columns([1, 2])
+        gen_single = colA.button("Generate")
+        gen_all = colB.button("Generate All Charts")
 
-    if gen_single:
-        if x_sel == y_sel:
-            st.warning("Select two different variables.")
-        else:
-            st.pyplot(contour_fig(ranked, x_sel, y_sel))
+        if gen_single:
+            if x_sel == y_sel:
+                st.warning("Select two different variables.")
+            else:
+                st.pyplot(contour_fig(ranked, x_sel, y_sel))
 
-    if gen_all:
-        st.markdown("### All Contour Plots")
-        for i, x in enumerate(vars_list):
-            for j, y in enumerate(vars_list):
-                if i >= j:
-                    continue  # skip duplicates and self-pairs
-                st.subheader(f"Contour: {x} vs {y}")
-                st.pyplot(contour_fig(ranked, x, y))
+        if gen_all:
+            st.markdown("### All Contour Plots")
+            for i, x in enumerate(vars_list):
+                for j, y in enumerate(vars_list):
+                    if i >= j:
+                        continue  # avoid duplicates and same-variable pairs
+                    st.subheader(f"Contour: {x} vs {y}")
+                    st.pyplot(contour_fig(ranked, x, y))
 
 
     with tab2:
