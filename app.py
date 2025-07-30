@@ -155,34 +155,51 @@ def cable_profile_fig(span, sag) -> Figure:
     fig.text(0.5, -0.1, CREDIT, ha="center", fontsize=8)
     return fig
 
+# ---------------------------------------------------------------
+# Plot helpers
+# ---------------------------------------------------------------
 def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
+    """
+    Draw a MOORA‑score contour plot for any X/Y variable pair.
+    Uses a 7‑colour custom map:
+        Black → Dark Red → Purple → Blue → Sky Blue → Light Green → Yellow
+    Shows integer ticks if Y‑axis is N_Cables.
+    """
     from matplotlib.colors import LinearSegmentedColormap
 
+    # Grid for interpolation -------------------------------------------------
     xi = np.linspace(df[xvar].min(), df[xvar].max(), 120)
 
-    # Ensure integer axis for N_Cables
-    if yvar == "N_Cables":
-        y_unique = sorted(df[yvar].unique())
-        yi = np.array(y_unique)
+    if yvar == "N_Cables":                       # keep cable count integer
+        yi = np.array(sorted(df[yvar].unique()))
     else:
         yi = np.linspace(df[yvar].min(), df[yvar].max(), 120)
 
     Xi, Yi = np.meshgrid(xi, yi)
-    Zi = griddata((df[xvar], df[yvar]), df["MOORA_Score"], (Xi, Yi), method="cubic")
-
-    # --- vivid 7‑color map, low→high: Black → Dark Red → Purple → Blue → Sky Blue → Light Green → Yellow
-custom_cmap = LinearSegmentedColormap.from_list(
-    "custom_moora",
-    ["black", "#8B0000", "purple", "blue", "skyblue", "lightgreen", "yellow"],
-    N=256,
+    Zi = griddata(
+        (df[xvar], df[yvar]),
+        df["MOORA_Score"],
+        (Xi, Yi),
+        method="cubic",
     )
 
+    # 7‑colour vivid map ------------------------------------------------------
+    custom_cmap = LinearSegmentedColormap.from_list(
+        "custom_moora",
+        ["black", "#8B0000", "purple", "blue",
+         "skyblue", "lightgreen", "yellow"],
+        N=256,
+    )
+
+    # Plot --------------------------------------------------------------------
     fig = Figure(figsize=(6, 4))
-    ax = fig.add_subplot(111)
+    ax  = fig.add_subplot(111)
+
     cs = ax.contourf(Xi, Yi, Zi, levels=15, cmap=custom_cmap)
     ax.set_xlabel(xvar)
     ax.set_ylabel(yvar)
     ax.set_title("MOORA score contour")
+
     fig.colorbar(cs, ax=ax, label="MOORA Score")
     fig.text(0.5, -0.08, CREDIT, ha="center", fontsize=8)
 
