@@ -1,194 +1,353 @@
-"""
-Stress‑Ribbon Bridge – MOORA Profiler (Streamlit Edition)
-© Vijaykumar Parmar & Dr. K. B. Parikh, 2025
-----------------------------------------------------------
-Run locally:  streamlit run app.py
-Deployed:     Streamlit Cloud will autoload this file.
-"""
+#!/usr/bin/env python3
+# ================================================================
+#  Stress‑Ribbon Bridge Cable Selector  – Streamlit edition
+# ----------------------------------------------------------------
+#  Authors : Vijaykumar Parmar & Dr. K. B. Parikh   (© 2025)
+#  Licence : MIT‑style – use, modify, share with credit.
+# ================================================================
 
-# 🛠️ Imports (same gang, plus streamlit)
+# ---------------------------------------------------------------
+# 1. Imports
+# ---------------------------------------------------------------
 import math
+from dataclasses import dataclass
+from typing import Dict, List
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-import scipy.interpolate as spi
+from matplotlib import cm
+from matplotlib.figure import Figure
+from scipy.interpolate import griddata
+import plotly.express as px
 import streamlit as st
-from pandas.plotting import parallel_coordinates
-from matplotlib import cm, colors as mcolors
-from mpl_toolkits.mplot3d import Axes3D  # noqa – 3‑D side‑effects
 
-# ----------------------------------------------------------
-# 🧠 Core helpers – identical algebra, wrapped in functions
-# ----------------------------------------------------------
-def cable_area_mm2(d_mm):
+# ---------------------------------------------------------------
+# 2. Penalty / benefit configuration model
+# ---------------------------------------------------------------
+@dataclass
+class CriterionConfig:
+    """User‑tunable settings for MOORA penalty / benefit."""
+    enabled: bool = True
+    is_cost: bool = True           # True = cost, False = benefit
+    shape: str = "linear"          # "linear" | "exponential"
+    trigger: str = "above"         # "above" | "below" threshold
+    threshold: float = 0.0
+    slope: float = 1.0
+    exponent: float = 1.0
+
+# Default settings
+DEFAULT_CRIT: Dict[str, CriterionConfig] = {
+    "Utilisation"   : CriterionConfig(True, True , "exponential", "below", 0.8  , slope=1.0 , exponent=6.0),
+    "Slope_pct"     : CriterionConfig(True, True , "linear"     , "above", 2.5  , slope=1.0 ),
+    "Cable_Dia_mm"  : CriterionConfig(True, True , "linear"     , "above", 150  , slope=0.5 ),
+    "N_Cables"      : CriterionConfig(True, True , "exponential", "above", 5    , exponent=1.2),
+    "NatFreq_Hz"    : CriterionConfig(True, False, "linear"     , "above", 2.0  , slope=1.0 ),
+    "Tension_kN"    : CriterionConfig(True, True , "linear"     , "above", 0.0  , slope=1.0 ),
+    "Sag_m"         : CriterionConfig(True, True , "exponential", "below", 0.003, exponent=3.0),
+}
+
+CREDIT = "Authors : Vijaykumar Parmar & Dr. K. B. Parikh"
+
+# ---------------------------------------------------------------
+# 3. Engineering helper functions
+# ---------------------------------------------------------------
+def _area_mm2(d_mm: float) -> float:
+    """Cross‑sectional area of a round cable (mm²)."""
     return math.pi * (d_mm / 2) ** 2
 
-def generate_alternatives(
-    span, udl, n_cables, sigma, base_dia, gamma_kN_m3
-):
-    dia_factors = np.array([-0.50,-0.40,-0.30,-0.20,-0.10,
-                              0.00, 0.10, 0.20, 0.30, 0.40, 0.50])
-    util_factors = np.array([0.60,0.70,0.80,0.90,0.95,0.99,1.00])
-    rho = gamma_kN_m3 * 1_000 / 9.81  # kg/m³
+def cable_metrics(
+    span_m: float,
+    udl_kNpm: float,
+    n_cables: int,
+    dia_mm: float,
+    strength_MPa: float,
+    utilisation: float,
+    density_kNpm3: float,
+) -> Dict[str, float]:
+    """Compute structural responses for one alternative."""
+    area_mm2 = _area_mm2(dia_mm)
+    # Horizontal tension component
+    H_kN = n_cables * area_mm2 * utilisation * strength_MPa / 1_000
+    # Sag using parabolic approximation
+    sag_m = udl_kNpm * span_m ** 2 / (8 * H_kN) if H_kN else 0
+    # Vertical reaction
+    V_kN = udl_kNpm * span_m / 2
+    # Total anchor tension
+    T_kN = math.hypot(H_kN, V_kN)
+    # Natural frequency (simplified taut‑string expression)
+    area_m2 = area_mm2 * 1e-6
+    rho_kgpm3 = density_kNpm3 * 1_000 / 9.81
+    mu_kgpm = rho_kgpm3 * area_m2
+    omega_sq = (H_kN * 1_000) / (mu_kgpm * n_cables) if mu_kgpm and n_cables else 0
+    nat_f_Hz = (1 / (2 * span_m)) * math.sqrt(omega_sq) if omega_sq else 0
+    # Total cable mass
+    mass_kg = mu_kgpm * span_m * n_cables
 
-    rows = []
-    for f in dia_factors:
-        dia = round(base_dia * (1 + f), 3)
-        if dia < 10:           # sanity guard
-            continue
-        A_mm = cable_area_mm2(dia)
-        A_m  = A_mm * 1e-6
-        for util in util_factors:
-            H_kN = n_cables * A_mm * sigma * util / 1_000
-            H_N  = H_kN * 1_000
-            sag  = udl * span**2 / (8 * H_kN)
-            V_kN = udl * span / 2
-            T_kN = math.hypot(H_kN, V_kN)
-            mu   = rho * A_m
-            mass = mu * span * n_cables
-            f1   = (1 / (2 * span)) * math.sqrt(H_N / (mu * n_cables))
-            rows.append(
-                dict(
-                    Cable_Dia_mm=dia,
-                    Utilisation=util,
-                    Slope_pct=sag / span * 100,
-                    Tension_kN=T_kN,
-                    CableMass_kg=mass,
-                    NatFreq_Hz=f1,
-                )
-            )
-    return pd.DataFrame(rows).round(3)
-
-def moora_score(df):
-    """Vector‑normalised MOORA with NatFreq as a straight benefit."""
-    crit = {
-        "Slope_pct": False,
-        "Tension_kN": False,
-        "CableMass_kg": False,
-        "Cable_Dia_mm": False,
-        "NatFreq_Hz": True,
+    return {
+        "Cable_Dia_mm": dia_mm,
+        "Utilisation" : utilisation,
+        "N_Cables"    : n_cables,
+        "Slope_pct"   : sag_m / span_m * 100,
+        "Tension_kN"  : T_kN,
+        "Sag_m"       : sag_m,
+        "NatFreq_Hz"  : nat_f_Hz,
+        "CableMass_kg": mass_kg,
     }
-    for c in crit:
-        norm = np.sqrt((df[c] ** 2).sum())
-        df[f"N_{c}"] = 0 if norm == 0 else df[c] / norm
-    benefit = [f"N_{c}" for c, b in crit.items() if b]
-    cost    = [f"N_{c}" for c, b in crit.items() if not b]
-    df["MOORA_Score"] = df[benefit].sum(axis=1) - df[cost].sum(axis=1)
-    return df.round(3)
 
-# ------------- Streamlit UI starts here -------------------------------------
-st.set_page_config(page_title="SRB MOORA Profiler", layout="wide")
-st.title("Stress‑Ribbon Bridge – MOORA Profiler 🏗️")
+# ---------------------------------------------------------------
+# 4. Penalty / benefit magnitude
+# ---------------------------------------------------------------
+def _pb_value(x: float, cfg: CriterionConfig) -> float:
+    """
+    Return non‑negative penalty / benefit magnitude.
+    """
+    if not cfg.enabled:
+        return 0.0
+    diff = (x - cfg.threshold) if cfg.trigger == "above" else (cfg.threshold - x)
+    if diff <= 0:
+        return 0.0
+    if cfg.shape == "linear":
+        return cfg.slope * diff
+    if cfg.shape == "exponential":
+        return math.exp(cfg.exponent * diff) - 1
+    return 0.0
 
+# ---------------------------------------------------------------
+# 5. Design‑space generation
+# ---------------------------------------------------------------
+def generate_alternatives(
+    span: float,
+    udl: float,
+    base_n: int,
+    base_dia: float,
+    strength: float,
+    density: float,
+    bridge_w: float,
+    util_grid: List[float],
+    dia_factors: List[float],
+    n_delta: int,
+) -> pd.DataFrame:
+    """Return DataFrame of every candidate configuration."""
+    recs = []
+    n_options = [max(2, base_n + i) for i in range(-n_delta, n_delta + 1)]
+    for fac in dia_factors:
+        dia = round(base_dia * (1 + fac), 3)
+        if dia < 5:                       # omit unrealistic diameters
+            continue
+        for util in util_grid:
+            for n in n_options:
+                row = cable_metrics(span, udl, n, dia, strength, util, density)
+                row["Cable_Spacing_m"]   = bridge_w / n
+                row["UDL_perCable_kNpm"] = udl / n
+                recs.append(row)
+    return pd.DataFrame(recs).round(6)
+
+# ---------------------------------------------------------------
+# 6. MOORA scoring & ranking
+# ---------------------------------------------------------------
+def moora_rank(df: pd.DataFrame, cfg_map: Dict[str, CriterionConfig]) -> pd.DataFrame:
+    """Add PB columns, normalise, score, and return ranked DataFrame."""
+    benefit, cost = [], []
+    # Penalty / benefit columns
+    for crit, cfg in cfg_map.items():
+        if not cfg.enabled:
+            continue
+        col = f"PB_{crit}"
+        df[col] = df[crit].apply(lambda v: _pb_value(v, cfg))
+        (cost if cfg.is_cost else benefit).append(col)
+    # Vector normalise
+    for col in benefit + cost:
+        norm = np.sqrt((df[col] ** 2).sum())
+        df[f"N_{col}"] = df[col] / norm if norm else 0
+    # MOORA score
+    df["MOORA_Score"] = (
+        df[[f"N_{c}" for c in benefit]].sum(axis=1)
+        - df[[f"N_{c}" for c in cost]].sum(axis=1)
+    )
+    ranked = df.sort_values("MOORA_Score", ascending=False).reset_index(drop=True)
+    ranked.index += 1
+    ranked["Rank"] = ranked.index
+    return ranked
+
+# ---------------------------------------------------------------
+# 7. Plot helpers
+# ---------------------------------------------------------------
+def cable_profile_fig(span, sag, label="Cable"):
+    """Matplotlib figure of sagging cable (downward)."""
+    x = np.linspace(0, span, 200)
+    y = -4 * sag * (x / span) * (1 - x / span)  # downward sag
+    fig = Figure(figsize=(6, 3))
+    ax = fig.add_subplot(111)
+    ax.plot(x, y, label=label, color="tab:blue")
+    ax.set_xlabel("Span position (m)")
+    ax.set_ylabel("Elevation (m, downward)")
+    ax.set_title("Cable elevation profile")
+    ax.grid(alpha=0.3, linestyle="--")
+    ax.legend()
+    fig.text(0.5, -0.1, CREDIT, ha="center", fontsize=8)
+    return fig
+
+def contour_fig(df: pd.DataFrame, xvar: str, yvar: str):
+    """Matplotlib contour figure for MOORA score."""
+    xi = np.linspace(df[xvar].min(), df[xvar].max(), 120)
+    yi = np.linspace(df[yvar].min(), df[yvar].max(), 120)
+    Xi, Yi = np.meshgrid(xi, yi)
+    Zi = griddata((df[xvar], df[yvar]), df["MOORA_Score"], (Xi, Yi), method="cubic")
+    fig = Figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    cs = ax.contourf(Xi, Yi, Zi, levels=15, cmap=cm.viridis)
+    ax.set_xlabel(xvar)
+    ax.set_ylabel(yvar)
+    ax.set_title("MOORA score contour")
+    fig.colorbar(cs, ax=ax, label="MOORA Score")
+    fig.text(0.5, -0.08, CREDIT, ha="center", fontsize=8)
+    return fig
+
+def parallel_fig(df: pd.DataFrame):
+    """Plotly parallel‑coordinates of all alternatives."""
+    fig = px.parallel_coordinates(
+        df,
+        dimensions=[
+            "Cable_Dia_mm", "Utilisation", "N_Cables", "NatFreq_Hz",
+            "Sag_m", "Tension_kN", "CableMass_kg", "MOORA_Score",
+        ],
+        color="MOORA_Score",
+        color_continuous_scale=px.colors.sequential.Viridis,
+        title="Parallel coordinates – all alternatives",
+    )
+    fig.add_annotation(
+        text=CREDIT, x=0.5, y=-0.12, xref="paper", yref="paper",
+        showarrow=False, font=dict(size=10)
+    )
+    fig.update_layout(font=dict(size=11))
+    return fig
+
+# ===============================================================
+# 8. Streamlit UI
+# ===============================================================
+st.set_page_config(
+    page_title="SRB Cable Selector – MOORA",
+    layout="wide",
+)
+
+st.title("Stress‑Ribbon Bridge Cable Selector (MOORA)")
+
+# -------------  Sidebar inputs ---------------------------------
 with st.sidebar:
-    st.header("🔧 Input parameters")
-    span      = st.number_input("Span L (m)",          10.0, 500.0, 50.0, 5.0)
-    udl       = st.number_input("UDL w (kN/m)",        1.0,  50.0, 5.0,  0.5)
-    n_cables  = st.slider("No. of Cables n",           1,    6,    2)
-    spacing   = st.number_input("Cable Spacing (m)",   0.2,  5.0,  1.0, 0.1)
-    sigma     = st.number_input("Cable Strength σ (MPa)", 500, 2500, 1600, 50)
-    base_dia  = st.number_input("Base Cable Ø (mm)",   6.0,  60.0, 20.0, 0.5)
-    gamma     = st.number_input("Cable Density γ (kN/m³)", 50.0, 90.0, 77.0, 1.0)
-    st.caption("*(Strength & density defaults = typical high‑strength steel)*")
+    st.header("Bridge parameters")
+    span   = st.number_input("Span L (m)", 10.0, 500.0, 50.0, step=1.0)
+    udl    = st.number_input("UDL w (kN/m)", 10.0, 1000.0, 100.0, step=10.0)
+    width  = st.number_input("Bridge width (m)", 1.0, 10.0, 3.0, step=0.1)
+    base_n = st.number_input("Base number of cables", 2, 20, 2, step=1)
+    base_d = st.number_input("Base cable diameter (mm)", 5.0, 300.0, 20.0, step=1.0)
+    strength = st.number_input("Cable strength σ (MPa)", 200.0, 3000.0, 1600.0, step=50.0)
+    density  = st.number_input("Density γ (kN/m³)", 50.0, 90.0, 77.0, step=1.0)
+    n_delta  = st.slider("± range around base #Cables", 0, 5, 1)
 
-# 🏃‍♂️ Crunch numbers (cached because math never changes unless inputs do)
-@st.cache_data(show_spinner=False)
-def run_model(span, udl, n_cables, spacing, sigma, base_dia, gamma):
-    df = generate_alternatives(span, udl, n_cables, sigma, base_dia, gamma)
-    df = moora_score(df)
-    df = df.sort_values("MOORA_Score", ascending=False).reset_index(drop=True)
-    df.index += 1
-    df["Rank"] = df.index
-    return df
+    st.markdown("---")
+    st.subheader("MOORA criterion settings")
 
-df_ranked = run_model(span, udl, n_cables, spacing, sigma, base_dia, gamma)
+    # Collect criterion UI into dict of configs
+    cfg_map: Dict[str, CriterionConfig] = {}
+    for name, default_cfg in DEFAULT_CRIT.items():
+        with st.expander(name, expanded=False):
+            enabled   = st.checkbox("Enabled", value=default_cfg.enabled, key=name+"_en")
+            is_cost   = st.radio("Type", ["Cost", "Benefit"],
+                                 index=0 if default_cfg.is_cost else 1, key=name+"_type")
+            shape     = st.selectbox("Shape", ["linear", "exponential"],
+                                     index=0 if default_cfg.shape=="linear" else 1,
+                                     key=name+"_shape")
+            trigger   = st.selectbox("Trigger", ["above", "below"],
+                                     index=0 if default_cfg.trigger=="above" else 1,
+                                     key=name+"_trig")
+            threshold = st.number_input("Threshold", value=default_cfg.threshold, key=name+"_thr")
+            slope     = st.number_input("Slope (linear)", value=default_cfg.slope, key=name+"_slope")
+            exponent  = st.number_input("Exponent (exp)", value=default_cfg.exponent, key=name+"_exp")
+        cfg_map[name] = CriterionConfig(
+            enabled,
+            is_cost == "Cost",
+            shape,
+            trigger,
+            threshold,
+            slope,
+            exponent,
+        )
 
-# 📊 Tabs for tasty visuals
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["Table", "2‑D Contours", "3‑D Surface", "Parallel Coords"]
-)
+    run_clicked = st.button("Run analysis", type="primary")
 
-with tab1:
-    st.subheader("🏆 Ranked alternatives (top 20)")
-    st.dataframe(df_ranked.head(20), height=400, use_container_width=True)
+# ---------------------------------------------------------------
+# 9. Perform analysis on button press
+# ---------------------------------------------------------------
+if run_clicked:
+    # Generate design space
+    util_grid   = [0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0]
+    dia_factors = np.linspace(-0.5, 0.5, 11)
+    df_alts = generate_alternatives(
+        span, udl, base_n, base_d, strength, density,
+        width, util_grid, dia_factors, n_delta,
+    )
 
-def contour_plot(x, y, z, title, clabel, cmap="viridis", overlay=None):
-    xi = np.linspace(x.min(), x.max(), 140)
-    yi = np.linspace(y.min(), y.max(), 140)
-    Xi, Yi = np.meshgrid(xi, yi)
-    Zi = spi.griddata((x, y), z, (Xi, Yi), method="cubic")
-    fig, ax = plt.subplots(figsize=(7, 5))
-    cs = ax.contourf(Xi, Yi, Zi, 15, cmap=cmap)
-    ax.contour(Xi, Yi, Zi, 15, colors="k", linewidths=0.25)
-    if overlay:
-        for val, style in overlay:
-            ax.contour(Xi, Yi, Zi, [val], colors="w", linestyles=style, linewidths=1)
-    ax.set_xlabel("Cable Ø (mm)")
-    ax.set_ylabel("Utilisation")
-    ax.set_title(title)
-    fig.colorbar(cs, ax=ax, label=clabel)
-    st.pyplot(fig)
+    ranked = moora_rank(df_alts.copy(), cfg_map)
 
-with tab2:
-    st.subheader("Filled contour maps (Ø × Utilisation)")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        contour_plot(df_ranked["Cable_Dia_mm"], df_ranked["Utilisation"],
-                     df_ranked["MOORA_Score"], "MOORA Score", "Score")
-    with col2:
-        contour_plot(df_ranked["Cable_Dia_mm"], df_ranked["Utilisation"],
-                     df_ranked["CableMass_kg"], "Cable Mass (kg)", "kg", cmap="magma_r")
-    with col3:
-        contour_plot(df_ranked["Cable_Dia_mm"], df_ranked["Utilisation"],
-                     df_ranked["NatFreq_Hz"], "Natural Frequency (Hz)", "Hz",
-                     cmap="plasma", overlay=[(3,"--"),(5,":")])
+    # Cache for later use (contour plot)
+    st.session_state["ranked_df"] = ranked
 
-with tab3:
-    st.subheader("3‑D Surface (NatFreq; colour = Slope)")
-    xi = np.linspace(df_ranked["Cable_Dia_mm"].min(), df_ranked["Cable_Dia_mm"].max(), 60)
-    yi = np.linspace(df_ranked["Utilisation"].min(), df_ranked["Utilisation"].max(), 60)
-    Xi, Yi = np.meshgrid(xi, yi)
-    Zi = spi.griddata((df_ranked["Cable_Dia_mm"], df_ranked["Utilisation"]),
-                      df_ranked["NatFreq_Hz"], (Xi, Yi), method="cubic")
-    Si = spi.griddata((df_ranked["Cable_Dia_mm"], df_ranked["Utilisation"]),
-                      df_ranked["Slope_pct"], (Xi, Yi), method="cubic")
+    best = ranked.iloc[0]
 
-    norm = mcolors.Normalize(vmin=df_ranked["Slope_pct"].min(),
-                             vmax=df_ranked["Slope_pct"].max())
-    fig = plt.figure(figsize=(9,6))
-    ax = fig.add_subplot(111, projection="3d")
-    ax.plot_surface(Xi, Yi, Zi, facecolors=cm.RdYlGn_r(norm(Si)),
-                    rstride=1, cstride=1, antialiased=False)
-    ax.contour(Xi, Yi, Zi, zdir="z", offset=Zi.min()-0.5,
-               cmap="plasma", levels=10, linewidths=0.5)
-    ax.set_xlabel("Cable Ø (mm)"); ax.set_ylabel("Utilisation"); ax.set_zlabel("f₁ (Hz)")
-    ax.set_title("NatFreq surface (colour = deck slope)")
-    fig.colorbar(cm.ScalarMappable(norm=norm, cmap="RdYlGn_r"),
-                 ax=ax, shrink=0.6, label="Slope %")
-    st.pyplot(fig)
+    st.markdown(
+        f"### Preferred alternative  \n"
+        f"* Diameter: **{best.Cable_Dia_mm:.1f} mm**  \n"
+        f"* Cables: **{int(best.N_Cables)}**  \n"
+        f"* Utilisation: **{best.Utilisation:.2f}**  \n"
+        f"* MOORA score: **{best.MOORA_Score:.3f}**  \n\n"
+        f"**{CREDIT}**"
+    )
 
-with tab4:
-    st.subheader("Parallel‑coordinates of top 10 (cost axes inverted)")
-    pc = df_ranked.head(10).copy()
-    pc["InvSlope"]   = -pc["Slope_pct"]
-    pc["InvTension"] = -pc["Tension_kN"]
-    pc["InvMass"]    = -pc["CableMass_kg"]
-    pc["InvØ"]       = -pc["Cable_Dia_mm"]
-    plot_cols = ["InvSlope","InvTension","InvMass","InvØ","NatFreq_Hz","MOORA_Score"]
-    pc_norm = pc[plot_cols].apply(lambda s:(s - s.min())/(s.max() - s.min()))
-    pc_norm["Alt"] = "A"+pc_norm.index.astype(str)
-    fig, ax = plt.subplots(figsize=(10,4))
-    parallel_coordinates(pc_norm, "Alt", colormap="viridis", linewidth=2, ax=ax)
-    ax.set_ylabel("Normalised (0‑1)"); ax.set_xticklabels(ax.get_xticklabels(), rotation=25)
-    st.pyplot(fig)
+    # Input recap
+    recap_df = pd.DataFrame({
+        "Parameter": ["Span", "UDL", "Bridge width", "Base cables",
+                      "Base diameter", "Strength", "Density"],
+        "Value": [span, udl, width, base_n, base_d, strength, density],
+        "Unit": ["m", "kN/m", "m", "", "mm", "MPa", "kN/m³"],
+    })
+    st.table(recap_df)
 
-# 🎉 Footer summary
-best = df_ranked.iloc[0]
-st.success(
-    f"**Best design:** Ø {best.Cable_Dia_mm:.1f} mm, util {best.Utilisation:.2f}, "
-    f"slope {best.Slope_pct:.2f} %, tension {best.Tension_kN:.0f} kN, "
-    f"mass {best.CableMass_kg:.0f} kg, f₁ {best.NatFreq_Hz:.2f} Hz "
-    f"(MOORA {best.MOORA_Score:.3f})"
-)
-st.caption("If result does not suits you; try with different inputs.")
+    # Layout results (tabs)
+    tab1, tab2, tab3 = st.tabs(["Cable profile", "Parallel plot", "Full table"])
+
+    with tab1:
+        st.pyplot(cable_profile_fig(span, best.Sag_m, "Best alternative"))
+
+        # Contour generator
+        st.markdown("#### Contour plot generator")
+        vars_for_contour = [
+            "Utilisation", "Cable_Dia_mm", "N_Cables", "NatFreq_Hz",
+            "Sag_m", "Tension_kN", "CableMass_kg",
+        ]
+        colx, coly, colbtn = st.columns([3, 3, 1])
+        x_var = colx.selectbox("X variable", vars_for_contour, key="xvar")
+        y_var = coly.selectbox("Y variable", vars_for_contour, index=1, key="yvar")
+        if colbtn.button("Generate contour"):
+            if x_var == y_var:
+                st.warning("Choose two different variables.")
+            else:
+                st.pyplot(contour_fig(ranked, x_var, y_var))
+
+    with tab2:
+        st.plotly_chart(parallel_fig(ranked), use_container_width=True)
+
+    with tab3:
+        st.dataframe(ranked)
+
+        # CSV download
+        csv_data = ranked.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download CSV",
+            data=csv_data,
+            file_name="srb_results.csv",
+            mime="text/csv",
+        )
+
+else:
+    st.info("Adjust parameters in the sidebar and click **Run analysis**.")
