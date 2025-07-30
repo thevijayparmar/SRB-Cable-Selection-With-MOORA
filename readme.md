@@ -3,6 +3,8 @@
 [![Streamlit App](https://img.shields.io/badge/Try%20it‑on-Streamlit‑Cloud-ff4b4b?logo=streamlit&logoColor=white)](https://mooraforsrb.streamlit.app/)
 [![License](https://img.shields.io/github/license/your‑org/srb‑cable‑selector)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://www.python.org/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin)](https://www.linkedin.com/in/thevijayparmar/)
+
 
 > **Authors:** Vijaykumar Parmar & Dr. K. B. Parikh  
 > **© 2025 – All rights reserved**
