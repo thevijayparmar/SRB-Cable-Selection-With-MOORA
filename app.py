@@ -156,19 +156,40 @@ def cable_profile_fig(span, sag) -> Figure:
     return fig
 
 def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
+    from matplotlib.colors import LinearSegmentedColormap
+
     xi = np.linspace(df[xvar].min(), df[xvar].max(), 120)
-    yi = np.linspace(df[yvar].min(), df[yvar].max(), 120)
+
+    # Ensure integer axis for N_Cables
+    if yvar == "N_Cables":
+        y_unique = sorted(df[yvar].unique())
+        yi = np.array(y_unique)
+    else:
+        yi = np.linspace(df[yvar].min(), df[yvar].max(), 120)
+
     Xi, Yi = np.meshgrid(xi, yi)
     Zi = griddata((df[xvar], df[yvar]), df["MOORA_Score"], (Xi, Yi), method="cubic")
+
+    # Custom vivid colormap
+    custom_cmap = LinearSegmentedColormap.from_list(
+        "custom_moora", ["darkblue", "red", "skyblue", "yellow", "green"], N=256
+    )
+
     fig = Figure(figsize=(6, 4))
     ax = fig.add_subplot(111)
-    cs = ax.contourf(Xi, Yi, Zi, levels=15, cmap=cm.viridis)
+    cs = ax.contourf(Xi, Yi, Zi, levels=15, cmap=custom_cmap)
     ax.set_xlabel(xvar)
     ax.set_ylabel(yvar)
     ax.set_title("MOORA score contour")
     fig.colorbar(cs, ax=ax, label="MOORA Score")
     fig.text(0.5, -0.08, CREDIT, ha="center", fontsize=8)
+
+    # Force integer ticks for N_Cables
+    if yvar == "N_Cables":
+        ax.set_yticks(yi)
+
     return fig
+
 
 def parallel_fig(df: pd.DataFrame):
     top50 = df.head(50)               # limit to best 50
