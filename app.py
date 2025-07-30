@@ -170,9 +170,11 @@ def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
     Xi, Yi = np.meshgrid(xi, yi)
     Zi = griddata((df[xvar], df[yvar]), df["MOORA_Score"], (Xi, Yi), method="cubic")
 
-    # Custom vivid colormap
-    custom_cmap = LinearSegmentedColormap.from_list(
-        "custom_moora", ["darkblue", "red", "skyblue", "yellow", "green"], N=256
+    # --- vivid 7‑color map, low→high: Black → Dark Red → Purple → Blue → Sky Blue → Light Green → Yellow
+custom_cmap = LinearSegmentedColormap.from_list(
+    "custom_moora",
+    ["black", "#8B0000", "purple", "blue", "skyblue", "lightgreen", "yellow"],
+    N=256,
     )
 
     fig = Figure(figsize=(6, 4))
