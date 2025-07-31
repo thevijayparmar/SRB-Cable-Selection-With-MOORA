@@ -4,4 +4,3 @@ numpy>=1.23
 matplotlib>=3.7
 scipy>=1.10
 plotly>=5.18
-fpdf2==2.7.6
