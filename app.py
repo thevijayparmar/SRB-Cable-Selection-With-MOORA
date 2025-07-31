@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # ================================================================
-#  Stress‑Ribbon Bridge Cable Selector  – Streamlit edition
+#  Stress-Ribbon Bridge Cable Selector  – Streamlit edition
 # ----------------------------------------------------------------
-#  Authors : Vijaykumar Parmar & Dr. K. B. Parikh   (© 2025)
+#  Authors : Vijaykumar Parmar & Dr. K. B. Parikh   (© 2025)
 # ================================================================
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -17,6 +18,31 @@ from matplotlib.figure import Figure
 from scipy.interpolate import griddata
 import plotly.express as px
 import streamlit as st
+
+# ---------------------------------------------------------------
+# Constants & template CSV
+# ---------------------------------------------------------------
+CREDIT = "Authors : Vijaykumar Parmar & Dr. K. B. Parikh"
+
+TEMPLATE_CSV = """Bridge Name,Span L (m),UDL w (kN/m),Bridge width (m),Base Cable Diam,Base Cables,Strength (MPa),Density (kN/m3),Δ cables
+Demo-Bridge,80,15,3,30,4,1860,77,1
+"""
+
+CSV_RANGES = {
+    "Span L (m)"       : (10, 500),
+    "UDL w (kN/m)"     : (10, 1000),
+    "Bridge width (m)" : (1, 10),
+    "Base Cable Diam"  : (5, 300),
+    "Base Cables"      : (2, 20),
+    "Strength (MPa)"   : (200, 3000),
+    "Density (kN/m3)"  : (50, 90),
+    "Δ cables"         : (0, 5),
+}
+
+# ensure template exists
+if not os.path.exists("template_input.csv"):
+    with open("template_input.csv", "w") as _f:
+        _f.write(TEMPLATE_CSV)
 
 # ---------------------------------------------------------------
 # Penalty / benefit configuration model
@@ -31,9 +57,10 @@ class CriterionConfig:
     slope: float = 1.0
     exponent: float = 1.0
 
+
 DEFAULT_CRIT: Dict[str, CriterionConfig] = {
     "Utilisation"   : CriterionConfig(True,  True , "exponential", "below", 0.8  , slope=1.0 , exponent=6.0),
-    "Slope_pct"     : CriterionConfig(True,  False, "linear"     , "below", 2.5  , slope=1.0 ),  
+    "Slope_pct"     : CriterionConfig(True,  False, "linear"     , "below", 2.5  , slope=1.0 ),
     "Cable_Dia_mm"  : CriterionConfig(True,  True , "linear"     , "above", 150  , slope=0.5 ),
     "N_Cables"      : CriterionConfig(True,  True , "exponential", "above", 5    , exponent=1.2),
     "NatFreq_Hz"    : CriterionConfig(True,  False, "linear"     , "above", 2.0  , slope=1.0 ),
@@ -42,13 +69,12 @@ DEFAULT_CRIT: Dict[str, CriterionConfig] = {
 }
 
 
-CREDIT = "Authors : Vijaykumar Parmar & Dr. K. B. Parikh"
-
 # ---------------------------------------------------------------
 # Engineering helper functions
 # ---------------------------------------------------------------
 def _area_mm2(d_mm: float) -> float:
     return math.pi * (d_mm / 2) ** 2
+
 
 def cable_metrics(
     span_m: float,
@@ -81,6 +107,7 @@ def cable_metrics(
         "CableMass_kg": mass_kg,
     }
 
+
 # ---------------------------------------------------------------
 # Penalty / benefit magnitude
 # ---------------------------------------------------------------
@@ -96,14 +123,15 @@ def _pb_value(x: float, cfg: CriterionConfig) -> float:
         return math.exp(cfg.exponent * diff) - 1
     return 0.0
 
+
 # ---------------------------------------------------------------
-# Design‑space generation
+# Design-space generation
 # ---------------------------------------------------------------
 def generate_alternatives(
     span, udl, base_n, base_dia, strength, density,
     bridge_w, util_grid, dia_factors, n_delta,
 ) -> pd.DataFrame:
-    recs = []
+    recs: List[Dict[str, float]] = []
     n_opts = [max(2, base_n + i) for i in range(-n_delta, n_delta + 1)]
     for fac in dia_factors:
         dia = round(base_dia * (1 + fac), 3)
@@ -116,6 +144,7 @@ def generate_alternatives(
                 r["UDL_perCable_kNpm"] = udl / n
                 recs.append(r)
     return pd.DataFrame(recs).round(6)
+
 
 # ---------------------------------------------------------------
 # MOORA ranking
@@ -140,6 +169,7 @@ def moora_rank(df: pd.DataFrame, cfg_map: Dict[str, CriterionConfig]) -> pd.Data
     ranked["Rank"] = ranked.index
     return ranked
 
+
 # ---------------------------------------------------------------
 # Plot helpers
 # ---------------------------------------------------------------
@@ -156,22 +186,17 @@ def cable_profile_fig(span, sag) -> Figure:
     fig.text(0.5, -0.1, CREDIT, ha="center", fontsize=8)
     return fig
 
-# ---------------------------------------------------------------
-# Plot helpers
-# ---------------------------------------------------------------
+
 def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
     """
-    Draw a MOORA‑score contour plot for any X/Y variable pair.
-    Uses a 7‑colour custom map:
-        Black → Dark Red → Purple → Blue → Sky Blue → Light Green → Yellow
-    Shows integer ticks if Y‑axis is N_Cables.
+    Draw a MOORA-score contour plot for any X/Y variable pair.
+    Uses a 7-colour custom map.
     """
     from matplotlib.colors import LinearSegmentedColormap
 
-    # Grid for interpolation -------------------------------------------------
     xi = np.linspace(df[xvar].min(), df[xvar].max(), 120)
 
-    if yvar == "N_Cables":                       # keep cable count integer
+    if yvar == "N_Cables":          # keep cable count integer
         yi = np.array(sorted(df[yvar].unique()))
     else:
         yi = np.linspace(df[yvar].min(), df[yvar].max(), 120)
@@ -184,7 +209,6 @@ def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
         method="cubic",
     )
 
-    # 7‑colour vivid map ------------------------------------------------------
     custom_cmap = LinearSegmentedColormap.from_list(
         "custom_moora",
         ["black", "#8B0000", "purple", "blue",
@@ -192,19 +216,15 @@ def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
         N=256,
     )
 
-    # Plot --------------------------------------------------------------------
     fig = Figure(figsize=(6, 4))
     ax  = fig.add_subplot(111)
-
     cs = ax.contourf(Xi, Yi, Zi, levels=15, cmap=custom_cmap)
     ax.set_xlabel(xvar)
     ax.set_ylabel(yvar)
     ax.set_title("MOORA score contour")
-
     fig.colorbar(cs, ax=ax, label="MOORA Score")
     fig.text(0.5, -0.08, CREDIT, ha="center", fontsize=8)
 
-    # Force integer ticks for N_Cables
     if yvar == "N_Cables":
         ax.set_yticks(yi)
 
@@ -212,7 +232,7 @@ def contour_fig(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
 
 
 def parallel_fig(df: pd.DataFrame):
-    top50 = df.head(50)               # limit to best 50
+    top50 = df.head(50)
     fig = px.parallel_coordinates(
         top50,
         dimensions=[
@@ -230,25 +250,98 @@ def parallel_fig(df: pd.DataFrame):
     fig.update_layout(font=dict(size=11))
     return fig
 
+
 # ===============================================================
 # Streamlit UI
 # ===============================================================
 st.set_page_config("SRB Cable Selector – MOORA", layout="wide")
-st.title("Stress‑Ribbon Bridge Cable Selector (MOORA)")
+st.title("Stress-Ribbon Bridge Cable Selector (MOORA)")
+
+# Make sure session_state placeholders exist
+for key in ["span", "udl", "width", "base_n", "base_d",
+            "strength", "density", "n_delta", "bridge_id"]:
+    st.session_state.setdefault(key, None)
 
 # -------------------------------- Sidebar inputs ---------------
 with st.sidebar:
-    st.header("Bridge parameters")
-    span   = st.number_input("Span L (m)", 10.0, 500.0, 50.0)
-    udl    = st.number_input("UDL w (kN/m)", 10.0, 1000.0, 100.0)
-    width  = st.number_input("Bridge width (m)", 1.0, 10.0, 3.0)
-    base_n = st.number_input("Base number of cables", 2, 20, 2)
-    base_d = st.number_input("Base cable diameter (mm)", 5.0, 300.0, 20.0)
-    strength = st.number_input("Cable strength σ (MPa)", 200.0, 3000.0, 1600.0)
-    density  = st.number_input("Density γ (kN/m³)", 50.0, 90.0, 77.0)
-    n_delta  = st.slider("± range around base #Cables", 0, 5, 1)
+    st.header("Input mode")
+    input_mode = st.radio("Choose input method", ["Manual Input", "CSV Input"])
+
+    # -----------------------------------------------------------
+    # Manual Input widgets
+    # -----------------------------------------------------------
+    if input_mode == "Manual Input":
+        st.subheader("Bridge parameters – manual")
+        st.session_state.span   = st.number_input("Span L (m)",       10.0, 500.0, 50.0)
+        st.session_state.udl    = st.number_input("UDL w (kN/m)",     10.0, 1000.0, 100.0)
+        st.session_state.width  = st.number_input("Bridge width (m)", 1.0, 10.0, 3.0)
+        st.session_state.base_n = st.number_input("Base number of cables", 2, 20, 2)
+        st.session_state.base_d = st.number_input("Base cable diameter (mm)", 5.0, 300.0, 20.0)
+        st.session_state.strength = st.number_input("Cable strength σ (MPa)", 200.0, 3000.0, 1600.0)
+        st.session_state.density  = st.number_input("Density γ (kN/m³)", 50.0, 90.0, 77.0)
+        st.session_state.n_delta  = st.slider("± range around base #Cables", 0, 5, 1)
+        st.session_state.bridge_id = None  # not applicable
+
+    # -----------------------------------------------------------
+    # CSV Input widgets
+    # -----------------------------------------------------------
+    else:
+        st.subheader("Bridge parameters – CSV")
+        # template download
+        with open("template_input.csv", "rb") as tf:
+            st.download_button("📥 Download sample template.csv", tf,
+                               file_name="template_input.csv", mime="text/csv")
+
+        uploaded = st.file_uploader("Upload single-row CSV", type="csv")
+        if uploaded:
+            df_csv = pd.read_csv(uploaded)
+
+            # Validation colouring function ----------------------
+            def _validate_row(row):
+                colours = []
+                for col, val in row.items():
+                    if col in CSV_RANGES:
+                        lo, hi = CSV_RANGES[col]
+                        colours.append("background-color: red"
+                                       if not (lo <= val <= hi) else "")
+                    else:
+                        colours.append("")
+                return colours
+
+            styled = df_csv.style.apply(_validate_row, axis=1)
+            st.dataframe(styled, height=250)
+
+            # Row selector & load button -------------------------
+            row_idx = st.number_input(
+                "Row index to load (starting at 2 = first data row)",
+                min_value=2,
+                max_value=len(df_csv)+1,
+                value=2,
+                step=1
+            )
+
+            if st.button("Load input"):
+                try:
+                    row = df_csv.iloc[row_idx - 2]  # adjust: 2→index 0
+                except IndexError:
+                    st.error("Selected row index is out of range.")
+                else:
+                    # Transfer to session_state
+                    st.session_state.span      = float(row["Span L (m)"])
+                    st.session_state.udl       = float(row["UDL w (kN/m)"])
+                    st.session_state.width     = float(row["Bridge width (m)"])
+                    st.session_state.base_d    = float(row["Base Cable Diam"])
+                    st.session_state.base_n    = int(row["Base Cables"])
+                    st.session_state.strength  = float(row["Strength (MPa)"])
+                    st.session_state.density   = float(row["Density (kN/m3)"])
+                    st.session_state.n_delta   = int(row["Δ cables"])
+                    st.session_state.bridge_id = str(row["Bridge Name"])
+                    st.success(f"Loaded row {row_idx} for **{st.session_state.bridge_id}**")
 
     st.markdown("---")
+    # -----------------------------------------------------------
+    # MOORA criterion settings (identical to previous version)
+    # -----------------------------------------------------------
     st.subheader("MOORA criterion settings")
     cfg_map: Dict[str, CriterionConfig] = {}
     for name, cfg in DEFAULT_CRIT.items():
@@ -268,15 +361,28 @@ with st.sidebar:
 # Run analysis & store results in session_state
 # ---------------------------------------------------------------
 if run_clicked:
-    util_grid   = [0.6,0.7,0.8,0.9,0.95,0.99,1.0]
-    dia_factors = np.linspace(-0.5,0.5,11)
-    df_alts = generate_alternatives(
-        span, udl, base_n, base_d, strength, density,
-        width, util_grid, dia_factors, n_delta,
-    )
-    ranked = moora_rank(df_alts.copy(), cfg_map)
-    st.session_state["ranked_df"] = ranked
-    st.session_state["results_ready"] = True
+    required_keys = ["span", "udl", "width", "base_n", "base_d",
+                     "strength", "density", "n_delta"]
+    if any(st.session_state[k] is None for k in required_keys):
+        st.error("❗ Please complete the input (load CSV or fill manual values) before running.")
+    else:
+        util_grid   = [0.6,0.7,0.8,0.9,0.95,0.99,1.0]
+        dia_factors = np.linspace(-0.5,0.5,11)
+        df_alts = generate_alternatives(
+            st.session_state.span,
+            st.session_state.udl,
+            st.session_state.base_n,
+            st.session_state.base_d,
+            st.session_state.strength,
+            st.session_state.density,
+            st.session_state.width,
+            util_grid,
+            dia_factors,
+            st.session_state.n_delta,
+        )
+        ranked = moora_rank(df_alts.copy(), cfg_map)
+        st.session_state["ranked_df"] = ranked
+        st.session_state["results_ready"] = True
 
 # ---------------------------------------------------------------
 # Display results if available
@@ -285,9 +391,12 @@ if st.session_state.get("results_ready"):
     ranked = st.session_state["ranked_df"]
     best = ranked.iloc[0]
 
+    title = "### Preferred alternative"
+    if st.session_state.bridge_id:
+        title += f" for **{st.session_state.bridge_id}**"
     st.markdown(
-        f"### Preferred alternative  \n"
-        f"* Diameter: **{best.Cable_Dia_mm:.1f} mm**  \n"
+        f"{title}  \n"
+        f"* Diameter: **{best.Cable_Dia_mm:.1f} mm**  \n"
         f"* Cables: **{int(best.N_Cables)}**  \n"
         f"* Utilisation: **{best.Utilisation:.2f}**  \n"
         f"* MOORA score: **{best.MOORA_Score:.3f}**  \n\n"
@@ -297,7 +406,9 @@ if st.session_state.get("results_ready"):
     recap_df = pd.DataFrame({
         "Parameter": ["Span", "UDL", "Bridge width", "Base cables",
                       "Base diameter", "Strength", "Density"],
-        "Value": [span, udl, width, base_n, base_d, strength, density],
+        "Value": [st.session_state.span, st.session_state.udl, st.session_state.width,
+                  st.session_state.base_n, st.session_state.base_d,
+                  st.session_state.strength, st.session_state.density],
         "Unit": ["m", "kN/m", "m", "", "mm", "MPa", "kN/m³"],
     })
     st.table(recap_df)
@@ -305,14 +416,14 @@ if st.session_state.get("results_ready"):
     tab1, tab2, tab3 = st.tabs(["Cable profile & contour", "Parallel plot", "Full table"])
 
     with tab1:
-        st.pyplot(cable_profile_fig(span, best.Sag_m))
+        st.pyplot(cable_profile_fig(st.session_state.span, best.Sag_m))
 
         st.markdown("#### Contour plot generator")
         vars_list = [
             "Utilisation", "Cable_Dia_mm", "N_Cables", "NatFreq_Hz",
             "Sag_m", "Tension_kN", "CableMass_kg",
         ]
-        c1, c2, c3 = st.columns([3, 3, 1])
+        c1, c2, _ = st.columns([3, 3, 1])
         x_sel = c1.selectbox("X variable", vars_list, key="xsel")
         y_sel = c2.selectbox("Y variable", vars_list, index=1, key="ysel")
 
@@ -335,7 +446,6 @@ if st.session_state.get("results_ready"):
                     st.subheader(f"Contour: {x} vs {y}")
                     st.pyplot(contour_fig(ranked, x, y))
 
-
     with tab2:
         st.plotly_chart(parallel_fig(ranked), use_container_width=True)
 
@@ -348,4 +458,4 @@ if st.session_state.get("results_ready"):
             mime="text/csv",
         )
 else:
-    st.info("Set parameters in the sidebar and click **Run analysis**.")
+    st.info("Set parameters (manual or CSV) and click **Run analysis**.")
