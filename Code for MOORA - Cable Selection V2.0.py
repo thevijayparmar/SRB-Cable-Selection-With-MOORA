@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # ================================================================
-#  Stress‑Ribbon Bridge Cable Selector  – MOORA‑based analysis V2.0
+#  Stress‑Ribbon Bridge Cable Selector  – MOORA‑based analysis
 # ----------------------------------------------------------------
 #  Authors : Vijaykumar Parmar & Dr. K. B. Parikh   (© 2025)
+#  Note: This version is adapted for Streamlit from the original
+#        Jupyter/IPython implementation.
 # ================================================================
 
 # ---------------------------------------------------------------
@@ -145,7 +147,7 @@ def moora_rank(df: pd.DataFrame, cfg_map: Dict[str, CriterionConfig]) -> pd.Data
     return ranked
 
 # ---------------------------------------------------------------
-# 7. Plot helpers (Minor change to parallel_plot to return figure)
+# 7. Plot helpers
 # ---------------------------------------------------------------
 def cable_profile_plot(span, sag, label, equal_scale=False) -> Figure:
     xs = np.linspace(0, span, 200)
@@ -181,16 +183,24 @@ def contour_plot(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
 
 def parallel_plot(df: pd.DataFrame):
     # This function is modified to RETURN the figure instead of calling fig.show()
+    # CORRECTED: Added checks to prevent errors when there are few results.
     top10 = df.head(10).copy()
     dims = [
         "Cable_Dia_mm", "Utilisation", "N_Cables", "NatFreq_Hz",
         "Sag_m", "Tension_kN", "CableMass_kg", "MOORA_Score",
     ]
+
+    fig = go.Figure()
+
+    # Plot background data (ranks 4-10) only if it exists
     background_data = top10[top10['Rank'] > 3]
-    fig = go.Figure(data=go.Parcoords(
-        line=dict(color='#D3D3D3', width=1),
-        dimensions=[dict(label=col, values=background_data[col]) for col in dims]
-    ))
+    if not background_data.empty:
+        fig.add_trace(go.Parcoords(
+            line=dict(color='#D3D3D3', width=1),
+            dimensions=[dict(label=col, values=background_data[col]) for col in dims]
+        ))
+
+    # Plot top 3 ranks
     colors = ['yellow', 'green', 'blue']
     for i in range(3):
         rank = i + 1
@@ -200,6 +210,7 @@ def parallel_plot(df: pd.DataFrame):
                 line=dict(color=colors[i], width=4),
                 dimensions=[dict(label=col, values=row[col]) for col in dims]
             ))
+            
     fig.update_layout(
         title="Parallel coordinates – top 10 alternatives",
         font=dict(size=12)
