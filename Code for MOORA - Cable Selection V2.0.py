@@ -182,34 +182,47 @@ def contour_plot(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
     return fig
 
 def parallel_plot(df: pd.DataFrame):
-    # This function is modified to RETURN the figure instead of calling fig.show()
-    # CORRECTED: Added checks to prevent errors when there are few results.
+    """
+    CORRECTED: This function is completely rewritten to use a single, stable
+    Parcoords trace with a custom colorscale. This fixes the ValueError.
+    """
     top10 = df.head(10).copy()
+    if top10.empty:
+        return go.Figure() # Return empty figure if no data
+
     dims = [
         "Cable_Dia_mm", "Utilisation", "N_Cables", "NatFreq_Hz",
         "Sag_m", "Tension_kN", "CableMass_kg", "MOORA_Score",
     ]
 
-    fig = go.Figure()
+    # Map ranks to a numeric value for the colorscale
+    def map_rank_to_color_val(rank):
+        if rank == 1: return 1.0
+        if rank == 2: return 0.8
+        if rank == 3: return 0.6
+        return 0.1 # Ranks 4-10
 
-    # Plot background data (ranks 4-10) only if it exists
-    background_data = top10[top10['Rank'] > 3]
-    if not background_data.empty:
-        fig.add_trace(go.Parcoords(
-            line=dict(color='#D3D3D3', width=1),
-            dimensions=[dict(label=col, values=background_data[col]) for col in dims]
-        ))
+    color_vals = top10['Rank'].apply(map_rank_to_color_val)
 
-    # Plot top 3 ranks
-    colors = ['yellow', 'green', 'blue']
-    for i in range(3):
-        rank = i + 1
-        row = top10[top10['Rank'] == rank]
-        if not row.empty:
-            fig.add_trace(go.Parcoords(
-                line=dict(color=colors[i], width=4),
-                dimensions=[dict(label=col, values=row[col]) for col in dims]
-            ))
+    # Define the colorscale: numeric value -> color
+    custom_colorscale = [
+        [0.0, '#D3D3D3'], [0.1, '#D3D3D3'], # Ranks 4-10 -> Grey
+        [0.11, 'blue'],   [0.6, 'blue'],     # Rank 3 -> Blue
+        [0.61, 'green'],  [0.8, 'green'],    # Rank 2 -> Green
+        [0.81, 'yellow'], [1.0, 'yellow'],   # Rank 1 -> Yellow
+    ]
+
+    fig = go.Figure(data=go.Parcoords(
+        line=dict(
+            color=color_vals,
+            colorscale=custom_colorscale,
+            showscale=False, # Hide the color bar
+        ),
+        dimensions=[dict(
+            label=col,
+            values=top10[col]
+        ) for col in dims]
+    ))
             
     fig.update_layout(
         title="Parallel coordinates – top 10 alternatives",
@@ -219,7 +232,7 @@ def parallel_plot(df: pd.DataFrame):
         text=CREDIT, x=0.5, y=-0.12, xref="paper", yref="paper",
         showarrow=False, font=dict(size=10)
     )
-    return fig # Return figure for st.plotly_chart
+    return fig
 
 # ---------------------------------------------------------------
 # 8. UI layout and Backend Logic (Rewritten for Streamlit)
