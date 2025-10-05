@@ -151,12 +151,25 @@ def moora_rank(df: pd.DataFrame, cfg_map: Dict[str, CriterionConfig]) -> pd.Data
 # ---------------------------------------------------------------
 # 7. Plot helpers
 # ---------------------------------------------------------------
-def cable_profile_plot(span, sag, label) -> Figure:
+def cable_profile_plot(span, sag, label, equal_scale=False) -> Figure:
+    """
+    Generates a plot of the parabolic cable profile.
+    Now with an 'equal_scale' option for those who appreciate true-to-life proportions.
+    Because sometimes, a shallow sag curve just looks... disappointingly flat.
+    """
     xs = np.linspace(0, span, 200)
-    ys = -4 * sag * (xs / span) * (1 - xs / span)  # downward sag
+    # The classic parabolic assumption. Close enough for government work, as they say.
+    ys = -4 * sag * (xs / span) * (1 - xs / span)
     fig = Figure(figsize=(6, 3))
     ax = fig.add_subplot(111)
+    # NEW: Kill the whitespace. We're paying for these pixels, after all.
+    ax.margins(0)
     ax.plot(xs, ys, color="tab:blue", label=label)
+    
+    # NEW: Check if we're going for architectural accuracy or a more 'expressive' view.
+    if equal_scale:
+        ax.set_aspect('equal', adjustable='box')
+
     ax.set_xlabel("Span position (m)")
     ax.set_ylabel("Elevation (m, downward)")
     ax.set_title("Cable elevation profile")
@@ -181,22 +194,55 @@ def contour_plot(df: pd.DataFrame, xvar: str, yvar: str) -> Figure:
     return fig
 
 def parallel_plot(df: pd.DataFrame):
-    fig = px.parallel_coordinates(
-        df,
-        dimensions=[
-            "Cable_Dia_mm", "Utilisation", "N_Cables", "NatFreq_Hz",
-            "Sag_m", "Tension_kN", "CableMass_kg", "MOORA_Score",
-        ],
-        color="MOORA_Score",
-        color_continuous_scale=px.colors.sequential.Viridis,
-        title="Parallel coordinates – all alternatives",
+    """
+    This part is Revised in V2.0 to improavise as per reviewer guidance: Overhauled parallel plot. Instead of a rainbow mess, we now have a story.
+    Ranks 4-10 form the quiet, grey backdrop. The top 3 are our heroes,
+    highlighted in podium colors (well, programmer's podium colors).
+    """
+    # We need graph_objects for this kind of layered plotting. Px is too high-level.
+    import plotly.graph_objects as go
+
+    # --- 1. Filter to just the top 10 contenders ---
+    top10 = df.head(10).copy()
+    
+    # These are the dimensions we'll be judging our candidates on.
+    dims = [
+        "Cable_Dia_mm", "Utilisation", "N_Cables", "NatFreq_Hz",
+        "Sag_m", "Tension_kN", "CableMass_kg", "MOORA_Score",
+    ]
+
+    # --- 2. Create the base plot with the "runners-up" (Ranks 4-10) ---
+    # This is the chorus line, important but not the star of the show.
+    background_data = top10[top10['Rank'] > 3]
+    fig = go.Figure(data=go.Parcoords(
+        line=dict(color='#D3D3D3', width=1), # A respectable, modest grey.
+        dimensions=[dict(label=col, values=background_data[col]) for col in dims]
+    ))
+
+    # --- 3. Reducing top 50 best configuration to only 10, one by one ---
+    # Gold, Silver, Bronze... let's go with Yellow, Green, Blue. To match the MOORA chart Contours.
+    colors = ['yellow', 'green', 'blue']
+    for i in range(3):
+        rank = i + 1
+        row = top10[top10['Rank'] == rank]
+        # Defensive coding, just in case we have fewer than 3 results.
+        if not row.empty:
+            fig.add_trace(go.Parcoords(
+                line=dict(color=colors[i], width=4), # Bold lines for our winners.
+                dimensions=[dict(label=col, values=row[col]) for col in dims]
+            ))
+
+    # --- 4. Final layout touches ---
+    fig.update_layout(
+        title="Parallel coordinates – top 10 alternatives",
+        font=dict(size=12) # A bit larger, for readability.
     )
     fig.add_annotation(
         text=CREDIT, x=0.5, y=-0.12, xref="paper", yref="paper",
         showarrow=False, font=dict(size=10)
     )
-    fig.update_layout(font=dict(size=11))
     fig.show()
+
 
 # ---------------------------------------------------------------
 # 8. UI widgets
@@ -316,10 +362,10 @@ def run_analysis_clicked(_):
     with out_best:
         display(Markdown(
             f"## Preferred alternative  \n"
-            f"* Diameter: **{best.Cable_Dia_mm:.1f} mm**  \n"
-            f"* Cables: **{int(best.N_Cables)}**  \n"
-            f"* Utilisation: **{best.Utilisation:.2f}**  \n"
-            f"* MOORA score: **{best.MOORA_Score:.3f}**  \n\n"
+            f"* Diameter: **{best.Cable_Dia_mm:.1f} mm** \n"
+            f"* Cables: **{int(best.N_Cables)}** \n"
+            f"* Utilisation: **{best.Utilisation:.2f}** \n"
+            f"* MOORA score: **{best.MOORA_Score:.3f}** \n\n"
             f"**{CREDIT}**"
         ))
 
@@ -333,7 +379,9 @@ def run_analysis_clicked(_):
         display(recap)
 
     with out_profile:
-        display(cable_profile_plot(span, best.Sag_m, "Best alternative"))
+        # UPDATED: Call the modified function.
+        # TODO: Maybe expose the equal_scale option in the UI someday? For now, False is fine.
+        display(cable_profile_plot(span, best.Sag_m, "Best alternative", equal_scale=False))
 
     with out_parallel:
         parallel_plot(ranked)
